@@ -21,7 +21,7 @@ from telethon.errors import (
 API_ID = 30424297                  
 API_HASH = '815196d0e53b30fd4b33a98210442c98'    
 BOT_TOKEN = '9111222051:AAGea2BYZ4xuc51wn6ORkCpqxOzNhsxmIoE'  
-ADMIN_IDS = [8835365716]            
+ADMIN_IDS = [6449880399] # Admin ID အမှန် ပြောင်းထားပါသည်
 # ====================================================================
 
 # Web Server စနစ် (Render တွင် 24/7 Run ရန်)
@@ -156,7 +156,7 @@ async def user_share_worker(uid):
     await bot.send_message(
         int(uid),
         f"✅ Group ({len(target_chats)}) ခု အသင့်ဖြစ်ပါပြီ။\n"
-        f"🚀 စက္ကန့် ({user['interval']}) တိုင်း Auto-Share စတင်နေပါပြီ!\n"
+        f"🚀 စက္ကန့် ({user['interval']}) တိုင်း Premium Emoji များပါဝင်သော Forward စနစ်ဖြင့် စတင်နေပါပြီ!\n"
         f"ရပ်တန့်လိုပါက `/stopshare` ကို နှိပ်ပါ။"
     )
 
@@ -175,13 +175,10 @@ async def user_share_worker(uid):
                 continue
 
             if original_msg:
-                text_content = original_msg.text if original_msg.text else ""
                 for chat in target_chats:
                     try:
-                        if original_msg.media:
-                            await client.send_file(chat, original_msg.media, caption=text_content)
-                        elif text_content:
-                            await client.send_message(chat, text_content)
+                        # Forward စနစ်ပြောင်းထားပါသည် (Premium Emojis ပါသွားစေရန်)
+                        await client.forward_messages(chat, original_msg)
                         await asyncio.sleep(2)
                     except FloodWaitError as e:
                         await asyncio.sleep(e.seconds)
