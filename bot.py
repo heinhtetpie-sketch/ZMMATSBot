@@ -5,6 +5,8 @@ import re
 import time
 import secrets
 from datetime import datetime
+from flask import Flask
+from threading import Thread
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.channels import JoinChannelRequest
@@ -19,8 +21,19 @@ from telethon.errors import (
 API_ID = 30424297                  
 API_HASH = '815196d0e53b30fd4b33a98210442c98'    
 BOT_TOKEN = '9111222051:AAGea2BYZ4xuc51wn6ORkCpqxOzNhsxmIoE'  
-ADMIN_IDS = [6449880399]            
+ADMIN_IDS = [8835365716]            
 # ====================================================================
+
+# Web Server စနစ် (Render တွင် 24/7 Run ရန်)
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Auto-Share Bot is Running 24/7!"
+
+def run_server():
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host="0.0.0.0", port=port)
 
 DATA_FILE = 'users_data.json'
 
@@ -106,7 +119,6 @@ async def join_target_group(client, link):
     except Exception:
         return None
 
-# ================= အမှားကင်းစင်သော Worker စနစ် (Emoji error ဖြေရှင်းပြီး) =================
 async def user_share_worker(uid):
     user = get_user(uid)
     client = TelegramClient(StringSession(user["session"]), API_ID, API_HASH)
@@ -166,7 +178,6 @@ async def user_share_worker(uid):
                 text_content = original_msg.text if original_msg.text else ""
                 for chat in target_chats:
                     try:
-                        # Premium Emoji ကြောင့် Error မတက်စေရန် စာသားနှင့် ပုံကို သီးသန့်ကူးယူပို့ခြင်း
                         if original_msg.media:
                             await client.send_file(chat, original_msg.media, caption=text_content)
                         elif text_content:
@@ -511,5 +522,7 @@ async def handle_login_steps(event):
             login_states.pop(uid, None)
             await event.respond(f"❌ Password မှားယွင်းနေပါသည်: {e}")
 
-print("🤖 VIP Multi-User Auto-Share Bot စတင် အလုပ်လုပ်နေပါပြီ...")
-bot.run_until_disconnected()
+if __name__ == "__main__":
+    Thread(target=run_server, daemon=True).start()
+    print("🤖 VIP Multi-User Auto-Share Bot စတင် အလုပ်လုပ်နေပါပြီ...")
+    bot.run_until_disconnected()
