@@ -159,32 +159,48 @@ async def user_share_worker(uid):
     except asyncio.CancelledError:
         await client.disconnect()
 
-# ================= ခလုတ် (Button) မီနူးပိုင်း =================
-@bot.on(events.NewMessage(pattern='/start|/menu'))
-async def start_cmd(event):
-    uid = str(event.sender_id)
-    get_user(uid)
-    msg = (
+# ================= UI အပိုင်း (Buttons & Menus) =================
+def get_main_menu_text(uid):
+    return (
         "👋 **Auto-Share Bot မှ ကြိုဆိုပါသည်**\n\n"
         f"👤 **သင့် ID:** `{uid}`\n"
         f"💎 **VIP သက်တမ်း:** {format_expiry(uid)}\n\n"
         "👇 **အောက်ပါခလုတ်များကိုနှိပ်၍ အသုံးပြုနိုင်ပါသည်**"
     )
-    buttons = [
+
+def get_main_menu_buttons():
+    return [
         [Button.inline("1️⃣ အကောင့်ချိတ်ရန်", b"m_login"), Button.inline("2️⃣ Post Link ထည့်ရန်", b"m_post")],
         [Button.inline("3️⃣ Group ထည့်ရန်", b"m_group"), Button.inline("4️⃣ Group ရှင်းရန်", b"m_clear")],
         [Button.inline("5️⃣ အချိန်သတ်မှတ်ရန်", b"m_time"), Button.inline("6️⃣ Status စစ်ရန်", b"m_status")],
         [Button.inline("7️⃣ Share စတင်ရန်", b"m_start"), Button.inline("8️⃣ Share ရပ်တန့်ရန်", b"m_stop")]
     ]
+
+def get_reply_keyboard(uid):
+    # Keyboard အသေ (အောက်ခြေ Menu)
     if is_admin(uid):
-        buttons.append([Button.inline("👑 Admin Menu (Command များ)", b"m_admin")])
-        
-    await event.respond(msg, buttons=buttons)
+        return [
+            [Button.text("🏠 Main Menu", resize=True), Button.text("👑 Admin Commands", resize=True)],
+            [Button.text("🆘 Help", resize=True)]
+        ]
+    return [
+        [Button.text("🏠 Main Menu", resize=True)],
+        [Button.text("🆘 Help", resize=True)]
+    ]
+
+back_btn = [[Button.inline("🔙 နောက်သို့ပြန်သွားမည်", b"m_back")]]
+
+@bot.on(events.NewMessage(pattern='/start|/menu'))
+async def start_cmd(event):
+    uid = str(event.sender_id)
+    get_user(uid)
+    await event.respond("အောက်ခြေရှိ Menu များကို ရွေးချယ်နိုင်ပါသည် 👇", buttons=get_reply_keyboard(uid))
+    await event.respond(get_main_menu_text(uid), buttons=get_main_menu_buttons())
 
 async def check_vip_access_cb(event):
     uid = str(event.sender_id)
     if not is_vip(uid):
-        await event.answer("🔒 VIP သက်တမ်း မရှိသေးပါ။ Admin ထံဆက်သွယ်ပါ သို့မဟုတ် /redeem <KEY> သုံးပါ။", alert=True)
+        await event.answer("🔒 VIP သက်တမ်း မရှိသေးပါ။", alert=True)
         return False
     return True
 
@@ -193,17 +209,10 @@ async def callback_handler(event):
     uid = str(event.sender_id)
     data = event.data.decode('utf-8')
     
-    if data == "m_admin":
-        if not is_admin(uid): return
-        msg = (
-            "👑 **Admin Commands (အောက်ပါတို့ကို စာရိုက်၍ သုံးပါ)**\n\n"
-            "🔑 `/genkey <ရက်> <အရေအတွက်>` - Key ထုတ်ရန်\n"
-            "➕ `/addvip <user_id> <ရက်>` - VIP ပေးရန်\n"
-            "➖ `/removevip <user_id>` - VIP ဖြုတ်ရန်\n"
-            "📋 `/vips` - VIP စာရင်းကြည့်ရန်\n"
-            "🎁 `/redeem <KEY>` - Key အသုံးပြုရန်"
-        )
-        await event.edit(msg)
+    if data == "m_back":
+        input_states.pop(uid, None)
+        login_states.pop(uid, None)
+        await event.edit(get_main_menu_text(uid), buttons=get_main_menu_buttons())
         return
 
     if not await check_vip_access_cb(event):
@@ -211,21 +220,21 @@ async def callback_handler(event):
 
     if data == "m_login":
         login_states[uid] = {"step": "phone"}
-        await event.respond("📱 ချိတ်ဆက်လိုသော Telegram ဖုန်းနံပါတ်ကို Country Code ဖြင့် ပို့ပေးပါ။\n(ဥပမာ - +95912345678)")
+        await event.edit("📱 ချိတ်ဆက်လိုသော Telegram ဖုန်းနံပါတ်ကို Country Code ဖြင့် ပို့ပေးပါ။\n(ဥပမာ - +95912345678)", buttons=back_btn)
     elif data == "m_post":
         input_states[uid] = "post"
-        await event.respond("📌 Share လုပ်လိုသော Post Link ကို ပေးပို့ပါ။")
+        await event.edit("📌 Share လုပ်လိုသော Post Link ကို ပေးပို့ပါ။", buttons=back_btn)
     elif data == "m_group":
         input_states[uid] = "group"
-        await event.respond("📌 Share ထည့်လိုသော Group Link သို့မဟုတ် Username ကို ပေးပို့ပါ။\n(ဥပမာ - https://t.me/mygroup)")
+        await event.edit("📌 Share ထည့်လိုသော Group Link ကို ပေးပို့ပါ။\n(ဥပမာ - https://t.me/mygroup)", buttons=back_btn)
     elif data == "m_clear":
         user = get_user(uid)
         user["groups"] = []
         save_data(users_db)
-        await event.edit("🗑️ Group စာရင်းအားလုံးကို ရှင်းလင်းပြီးပါပြီ။ 🔙 /menu ကိုနှိပ်ပါ။")
+        await event.edit("🗑️ Group စာရင်းအားလုံးကို ရှင်းလင်းပြီးပါပြီ။", buttons=back_btn)
     elif data == "m_time":
         input_states[uid] = "time"
-        await event.respond("⏱️ Share မည့် အချိန်ခြားနားချက်ကို စက္ကန့်ဖြင့် ပေးပို့ပါ။\n(ဥပမာ - 30)")
+        await event.edit("⏱️ Share မည့် အချိန်ခြားနားချက်ကို စက္ကန့်ဖြင့် ပေးပို့ပါ။\n(ဥပမာ - 30)", buttons=back_btn)
     elif data == "m_status":
         user = get_user(uid)
         is_logged = "✅ ချိတ်ဆက်ပြီး" if user["session"] else "❌ မချိတ်ရသေးပါ"
@@ -238,7 +247,7 @@ async def callback_handler(event):
             f"• **အချိန်:** {user['interval']} စက္ကန့်\n"
             f"• **အခြေအနေ:** {is_running}"
         )
-        await event.edit(msg)
+        await event.edit(msg, buttons=back_btn)
     elif data == "m_start":
         user = get_user(uid)
         if not user["session"]:
@@ -253,26 +262,49 @@ async def callback_handler(event):
         
         task = asyncio.create_task(user_share_worker(uid))
         running_tasks[uid] = task
-        await event.edit("🚀 Auto-Share စတင်နေပါပြီ... 🔙 /menu ကိုနှိပ်ပါ။")
+        await event.edit("🚀 Auto-Share စတင်နေပါပြီ...", buttons=back_btn)
     elif data == "m_stop":
         if uid in running_tasks:
             running_tasks[uid].cancel()
             running_tasks.pop(uid, None)
-            await event.edit("🛑 Auto-Share ကို ရပ်တန့်လိုက်ပါပြီ။ 🔙 /menu ကိုနှိပ်ပါ။")
+            await event.edit("🛑 Auto-Share ကို ရပ်တန့်လိုက်ပါပြီ။", buttons=back_btn)
         else:
             await event.answer("ℹ️ Run နေသော Auto-Share မရှိပါ။", alert=True)
 
-# ================= စာရိုက်မှုများ (Inputs) လက်ခံသည့် အပိုင်း =================
 @bot.on(events.NewMessage)
 async def handle_general_inputs(event):
     uid = str(event.sender_id)
     text = event.raw_text.strip()
     
     if text.startswith('/'):
-        input_states.pop(uid, None) # Command ရိုက်လျှင် Input တောင်းခြင်း ရပ်မည်
+        input_states.pop(uid, None)
         return
 
-    # OTP / Login အပိုင်း
+    # ================= Reply Keyboard (Menu အသေ) Handlers =================
+    if text == "🏠 Main Menu":
+        input_states.pop(uid, None)
+        login_states.pop(uid, None)
+        await event.respond(get_main_menu_text(uid), buttons=get_main_menu_buttons())
+        return
+        
+    if text == "👑 Admin Commands" and is_admin(uid):
+        msg = (
+            "👑 **Admin Commands (စာရိုက်၍ သုံးပါ)**\n\n"
+            "🔑 `/genkey <ရက်> <အရေအတွက်>` - Key ထုတ်ရန်\n"
+            "➕ `/addvip <user_id> <ရက်>` - VIP ပေးရန်\n"
+            "➖ `/removevip <user_id>` - VIP ဖြုတ်ရန်\n"
+            "📋 `/vips` - VIP စာရင်းကြည့်ရန်\n"
+            "🎁 `/redeem <KEY>` - မိမိကိုယ်တိုင် VIP သွင်းရန်"
+        )
+        await event.respond(msg)
+        return
+
+    if text == "🆘 Help":
+        await event.respond("👨‍💻 **အကူအညီလိုအပ်ပါက Admin သို့ ဆက်သွယ်ပါ**\n👉 @momogaming8")
+        return
+    # ====================================================================
+
+    # Login Logic
     if uid in login_states:
         state = login_states[uid]
         if state["step"] == "phone":
@@ -281,11 +313,11 @@ async def handle_general_inputs(event):
             try:
                 sent = await client.send_code_request(text)
                 state["client"], state["phone"], state["hash"], state["step"] = client, text, sent.phone_code_hash, "otp"
-                await event.respond("📩 Telegram သို့ ရောက်လာသော OTP ကုဒ်ကို Space ခြား၍ ပို့ပါ။ (ဥပမာ - 1 2 3 4 5)")
+                await event.respond("📩 Telegram သို့ ရောက်လာသော OTP ကုဒ်ကို Space ခြား၍ ပို့ပါ။ (ဥပမာ - 1 2 3 4 5)", buttons=back_btn)
             except Exception as e:
                 await client.disconnect()
                 login_states.pop(uid, None)
-                await event.respond(f"❌ အမှားရှိပါသည်: {e}")
+                await event.respond(f"❌ အမှားရှိပါသည်: {e}", buttons=back_btn)
         elif state["step"] == "otp":
             otp_code = text.replace(" ", "")
             client = state["client"]
@@ -296,14 +328,14 @@ async def handle_general_inputs(event):
                 save_data(users_db)
                 await client.disconnect()
                 login_states.pop(uid, None)
-                await event.respond("✅ အကောင့် ချိတ်ဆက်မှု အောင်မြင်ပါပြီ! 🔙 /menu ကိုနှိပ်ပါ။")
+                await event.respond("✅ အကောင့် ချိတ်ဆက်မှု အောင်မြင်ပါပြီ!", buttons=back_btn)
             except SessionPasswordNeededError:
                 state["step"] = "2fa"
-                await event.respond("🔐 Two-Step (2FA) Password ရိုက်ပို့ပေးပါ-")
+                await event.respond("🔐 Two-Step (2FA) Password ရိုက်ပို့ပေးပါ-", buttons=back_btn)
             except Exception as e:
                 await client.disconnect()
                 login_states.pop(uid, None)
-                await event.respond(f"❌ OTP မှားယွင်းနေပါသည်: {e}")
+                await event.respond(f"❌ OTP မှားယွင်းနေပါသည်: {e}", buttons=back_btn)
         elif state["step"] == "2fa":
             client = state["client"]
             try:
@@ -313,14 +345,14 @@ async def handle_general_inputs(event):
                 save_data(users_db)
                 await client.disconnect()
                 login_states.pop(uid, None)
-                await event.respond("✅ 2FA အတည်ပြုပြီး အကောင့်ချိတ်ဆက်မှု အောင်မြင်ပါပြီ! 🔙 /menu ကိုနှိပ်ပါ။")
+                await event.respond("✅ 2FA အတည်ပြုပြီး အကောင့်ချိတ်ဆက်မှု အောင်မြင်ပါပြီ!", buttons=back_btn)
             except Exception as e:
                 await client.disconnect()
                 login_states.pop(uid, None)
-                await event.respond(f"❌ Password မှားယွင်းနေပါသည်: {e}")
+                await event.respond(f"❌ Password မှားယွင်းနေပါသည်: {e}", buttons=back_btn)
         return
 
-    # Post Link, Group, Time ထည့်သည့် အပိုင်း
+    # Settings Input Logic
     if uid in input_states:
         action = input_states[uid]
         user = get_user(uid)
@@ -328,38 +360,37 @@ async def handle_general_inputs(event):
         if action == "post":
             chat, msg_id = parse_post_link(text)
             if not chat:
-                await event.respond("❌ Post Link ပုံစံ မှားနေပါသည်။ ပြန်ပို့ပါ။ (သို့) /menu ကိုနှိပ်ပါ။")
+                await event.respond("❌ Post Link ပုံစံ မှားနေပါသည်။ ပြန်ပို့ပါ။", buttons=back_btn)
                 return
             user["post_link"] = text
             save_data(users_db)
             input_states.pop(uid, None)
-            await event.respond("✅ Post Link သတ်မှတ်ပြီးပါပြီ။ 🔙 /menu ကိုနှိပ်ပါ။")
+            await event.respond("✅ Post Link သတ်မှတ်ပြီးပါပြီ။", buttons=back_btn)
             
         elif action == "group":
             if 't.me/' not in text:
-                await event.respond("❌ Group Link ပုံစံ မှားနေပါသည်။ 't.me/...' ပါဝင်ရပါမည်။")
+                await event.respond("❌ Group Link ပုံစံ မှားနေပါသည်။", buttons=back_btn)
                 return
             if text not in user["groups"]:
                 user["groups"].append(text)
                 save_data(users_db)
             input_states.pop(uid, None)
-            await event.respond(f"✅ Group Link အောင်မြင်စွာ ထည့်ပြီးပါပြီ။ (စုစုပေါင်း {len(user['groups'])} ခု)\nထပ်ထည့်လိုပါက Button 3 ကို ပြန်နှိပ်ပါ။ 🔙 /menu")
+            await event.respond(f"✅ Group Link ထည့်ပြီးပါပြီ။ (စုစုပေါင်း {len(user['groups'])} ခု)", buttons=back_btn)
             
         elif action == "time":
             if not text.isdigit():
-                await event.respond("❌ ဂဏန်းသာ ရိုက်ထည့်ပါ။ (ဥပမာ - 30)")
+                await event.respond("❌ ဂဏန်းသာ ရိုက်ထည့်ပါ။ (ဥပမာ - 30)", buttons=back_btn)
                 return
             sec = int(text)
             if sec < 15:
-                await event.respond("⚠️ အနည်းဆုံး 15 စက္ကန့် သတ်မှတ်ပါ။ ပြန်ထည့်ပါ။")
+                await event.respond("⚠️ အနည်းဆုံး 15 စက္ကန့် သတ်မှတ်ပါ။ ပြန်ထည့်ပါ။", buttons=back_btn)
                 return
             user["interval"] = sec
             save_data(users_db)
             input_states.pop(uid, None)
-            await event.respond(f"⏱️ အချိန် ({sec}) စက္ကန့် သတ်မှတ်ပြီးပါပြီ။ 🔙 /menu ကိုနှိပ်ပါ။")
+            await event.respond(f"⏱️ အချိန် ({sec}) စက္ကန့် သတ်မှတ်ပြီးပါပြီ။", buttons=back_btn)
         return
 
-# Admin Commands များ
 @bot.on(events.NewMessage(pattern=r'/redeem (.+)'))
 async def redeem_cmd(event):
     uid, key = str(event.sender_id), event.pattern_match.group(1).strip()
