@@ -7,7 +7,7 @@ import secrets
 from datetime import datetime
 from flask import Flask
 from threading import Thread
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
@@ -21,12 +21,10 @@ from telethon.errors import (
 API_ID = 30424297                  
 API_HASH = '815196d0e53b30fd4b33a98210442c98'    
 BOT_TOKEN = '9111222051:AAGea2BYZ4xuc51wn6ORkCpqxOzNhsxmIoE'  
-ADMIN_IDS = [6449880399] # Admin ID အမှန် ပြောင်းထားပါသည်
+ADMIN_IDS = [6449880399] # Admin ID အမှန်
 # ====================================================================
 
-# Web Server စနစ် (Render တွင် 24/7 Run ရန်)
 app = Flask(__name__)
-
 @app.route('/')
 def home():
     return "Auto-Share Bot is Running 24/7!"
@@ -53,19 +51,14 @@ if "_vip_keys" not in users_db:
 
 running_tasks = {}
 login_states = {}
+input_states = {}
 
 bot = TelegramClient('controller_bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
 def get_user(uid):
     uid = str(uid)
     if uid not in users_db:
-        users_db[uid] = {
-            "session": None,
-            "post_link": None,
-            "groups": [],
-            "interval": 30,
-            "vip_until": 0
-        }
+        users_db[uid] = {"session": None, "post_link": None, "groups": [], "interval": 30, "vip_until": 0}
         save_data(users_db)
     else:
         users_db[uid].setdefault("vip_until", 0)
@@ -100,43 +93,24 @@ def parse_post_link(link):
         chat = int("-100" + chat)
     return chat, msg_id
 
-async def join_target_group(client, link):
-    try:
-        if '+' in link or 'joinchat/' in link:
-            invite_hash = link.split('/')[-1].replace('+', '')
-            try:
-                updates = await client(ImportChatInviteRequest(invite_hash))
-                return updates.chats[0]
-            except UserAlreadyParticipantError:
-                return await client.get_entity(link)
-        else:
-            username = link.split('/')[-1].split('?')[0]
-            await client(JoinChannelRequest(username))
-            return await client.get_entity(username)
-    except FloodWaitError as e:
-        await asyncio.sleep(e.seconds)
-        return None
-    except Exception:
-        return None
-
 async def user_share_worker(uid):
     user = get_user(uid)
     client = TelegramClient(StringSession(user["session"]), API_ID, API_HASH)
     await client.connect()
 
     if not await client.is_user_authorized():
-        await bot.send_message(int(uid), "❌ သင့်အကောင့် Session သက်တမ်းကုန်သွားပါပြီ။ `/login` ဖြင့် ပြန်ဝင်ပါ။")
+        await bot.send_message(int(uid), "❌ Session သက်တမ်းကုန်သွားပါပြီ။ Login ပြန်ဝင်ပါ။")
         running_tasks.pop(uid, None)
         return
 
     source_chat, msg_id = parse_post_link(user["post_link"])
     if not source_chat:
-        await bot.send_message(int(uid), "❌ Post Link ပုံစံ မှားနေပါသည်။ `/setpost` ဖြင့် ပြန်ထည့်ပါ။")
+        await bot.send_message(int(uid), "❌ Post Link ပုံစံ မှားနေပါသည်။ ပြန်ထည့်ပါ။")
         running_tasks.pop(uid, None)
         await client.disconnect()
         return
 
-    await bot.send_message(int(uid), "🔄 ပေးထားသော Group များကို ချိတ်ဆက်နေပါသည်...")
+    await bot.send_message(int(uid), "🔄 Group များကို ချိတ်ဆက်နေပါသည်...")
     
     target_chats = []
     for link in user["groups"]:
@@ -148,7 +122,7 @@ async def user_share_worker(uid):
         await asyncio.sleep(2)
 
     if not target_chats:
-        await bot.send_message(int(uid), "⚠️ မည်သည့် Group ကိုမှ ချိတ်ဆက်မရပါ။ Group Link များ ပြန်စစ်ပါ။")
+        await bot.send_message(int(uid), "⚠️ မည်သည့် Group ကိုမှ ချိတ်ဆက်မရပါ။ Link များ ပြန်စစ်ပါ။")
         running_tasks.pop(uid, None)
         await client.disconnect()
         return
@@ -156,18 +130,16 @@ async def user_share_worker(uid):
     await bot.send_message(
         int(uid),
         f"✅ Group ({len(target_chats)}) ခု အသင့်ဖြစ်ပါပြီ။\n"
-        f"🚀 စက္ကန့် ({user['interval']}) တိုင်း Premium Emoji များပါဝင်သော Forward စနစ်ဖြင့် စတင်နေပါပြီ!\n"
-        f"ရပ်တန့်လိုပါက `/stopshare` ကို နှိပ်ပါ။"
+        f"🚀 စက္ကန့် ({user['interval']}) တိုင်း (Premium Emoji Forward) ဖြင့် စတင်နေပါပြီ!"
     )
 
     try:
         while True:
             if not is_vip(uid):
-                await bot.send_message(int(uid), "⚠️ သင်၏ VIP သက်တမ်း ကုန်ဆုံးသွားသဖြင့် Auto-Share ရပ်တန့်လိုက်ပါပြီ။")
+                await bot.send_message(int(uid), "⚠️ VIP သက်တမ်း ကုန်ဆုံးသဖြင့် ရပ်တန့်လိုက်ပါပြီ။")
                 running_tasks.pop(uid, None)
                 await client.disconnect()
                 return
-
             try:
                 original_msg = await client.get_messages(source_chat, ids=msg_id)
             except Exception:
@@ -177,349 +149,276 @@ async def user_share_worker(uid):
             if original_msg:
                 for chat in target_chats:
                     try:
-                        # Forward စနစ်ပြောင်းထားပါသည် (Premium Emojis ပါသွားစေရန်)
                         await client.forward_messages(chat, original_msg)
                         await asyncio.sleep(2)
                     except FloodWaitError as e:
                         await asyncio.sleep(e.seconds)
                     except Exception:
                         pass
-
             await asyncio.sleep(user["interval"])
     except asyncio.CancelledError:
         await client.disconnect()
 
-@bot.on(events.NewMessage(pattern='/start'))
+# ================= ခလုတ် (Button) မီနူးပိုင်း =================
+@bot.on(events.NewMessage(pattern='/start|/menu'))
 async def start_cmd(event):
     uid = str(event.sender_id)
     get_user(uid)
     msg = (
-        "👋 **Auto-Join & Auto-Share Bot သို့ ကြိုဆိုပါတယ်!**\n\n"
-        f"👤 **သင့် User ID:** `{uid}`\n"
+        "👋 **Auto-Share Bot မှ ကြိုဆိုပါသည်**\n\n"
+        f"👤 **သင့် ID:** `{uid}`\n"
         f"💎 **VIP သက်တမ်း:** {format_expiry(uid)}\n\n"
-        "🔑 **VIP သက်တမ်းသွင်းရန်:**\n"
-        "• `/redeem <VIP_KEY>` - VIP Key ဖြင့် သက်တမ်းတိုးရန်\n"
-        "• `/myid` - မိမိ User ID ကြည့်ရန်\n\n"
-        "⚙️ **Bot အသုံးပြုရန် (VIP များအတွက်သာ):**\n"
-        "1️⃣ `/login` - Telegram အကောင့် ချိတ်ဆက်ရန်\n"
-        "2️⃣ `/setpost <link>` - Share မည့် Post Link ထည့်ရန်\n"
-        "3️⃣ `/addgroups <link>` - Group Link ထည့်ရန်\n"
-        "4️⃣ `/clear` - Group စာရင်း အကုန်ဖျက်ရန်\n"
-        "5️⃣ `/settime <စက္ကန့်>` - အချိန်သတ်မှတ်ရန်\n"
-        "6️⃣ `/status` - လက်ရှိအချက်အလက် စစ်ဆေးရန်\n"
-        "7️⃣ `/startshare` - Auto-Share စတင်ရန်\n"
-        "8️⃣ `/stopshare` - Auto-Share ရပ်တန့်ရန်"
+        "👇 **အောက်ပါခလုတ်များကိုနှိပ်၍ အသုံးပြုနိုင်ပါသည်**"
     )
+    buttons = [
+        [Button.inline("1️⃣ အကောင့်ချိတ်ရန်", b"m_login"), Button.inline("2️⃣ Post Link ထည့်ရန်", b"m_post")],
+        [Button.inline("3️⃣ Group ထည့်ရန်", b"m_group"), Button.inline("4️⃣ Group ရှင်းရန်", b"m_clear")],
+        [Button.inline("5️⃣ အချိန်သတ်မှတ်ရန်", b"m_time"), Button.inline("6️⃣ Status စစ်ရန်", b"m_status")],
+        [Button.inline("7️⃣ Share စတင်ရန်", b"m_start"), Button.inline("8️⃣ Share ရပ်တန့်ရန်", b"m_stop")]
+    ]
     if is_admin(uid):
-        msg += (
-            "\n\n👑 **Admin သီးသန့် Commands:**\n"
-            "• `/genkey <ရက်> <အရေအတွက်>` - VIP Key ထုတ်ရန်\n"
-            "• `/addvip <user_id> <ရက်>` - ID ဖြင့် VIP ပေးရန်\n"
-            "• `/removevip <user_id>` - VIP ပြန်ဖြုတ်ရန်\n"
-            "• `/vips` - VIP စာရင်းကြည့်ရန်"
+        buttons.append([Button.inline("👑 Admin Menu (Command များ)", b"m_admin")])
+        
+    await event.respond(msg, buttons=buttons)
+
+async def check_vip_access_cb(event):
+    uid = str(event.sender_id)
+    if not is_vip(uid):
+        await event.answer("🔒 VIP သက်တမ်း မရှိသေးပါ။ Admin ထံဆက်သွယ်ပါ သို့မဟုတ် /redeem <KEY> သုံးပါ။", alert=True)
+        return False
+    return True
+
+@bot.on(events.CallbackQuery)
+async def callback_handler(event):
+    uid = str(event.sender_id)
+    data = event.data.decode('utf-8')
+    
+    if data == "m_admin":
+        if not is_admin(uid): return
+        msg = (
+            "👑 **Admin Commands (အောက်ပါတို့ကို စာရိုက်၍ သုံးပါ)**\n\n"
+            "🔑 `/genkey <ရက်> <အရေအတွက်>` - Key ထုတ်ရန်\n"
+            "➕ `/addvip <user_id> <ရက်>` - VIP ပေးရန်\n"
+            "➖ `/removevip <user_id>` - VIP ဖြုတ်ရန်\n"
+            "📋 `/vips` - VIP စာရင်းကြည့်ရန်\n"
+            "🎁 `/redeem <KEY>` - Key အသုံးပြုရန်"
         )
-    await event.respond(msg)
-
-@bot.on(events.NewMessage(pattern='/myid'))
-async def myid_cmd(event):
-    uid = str(event.sender_id)
-    await event.respond(f"👤 သင်၏ Telegram User ID မှာ - `{uid}` ဖြစ်ပါသည်။")
-
-@bot.on(events.NewMessage(pattern=r'/redeem (.+)'))
-async def redeem_cmd(event):
-    uid = str(event.sender_id)
-    key = event.pattern_match.group(1).strip()
-    keys_pool = users_db.get("_vip_keys", {})
-
-    if key not in keys_pool:
-        await event.respond("❌ VIP Key မှားယွင်းနေပါသည် သို့မဟုတ် အသုံးပြုပြီးသား ဖြစ်နေပါသည်။")
+        await event.edit(msg)
         return
 
+    if not await check_vip_access_cb(event):
+        return
+
+    if data == "m_login":
+        login_states[uid] = {"step": "phone"}
+        await event.respond("📱 ချိတ်ဆက်လိုသော Telegram ဖုန်းနံပါတ်ကို Country Code ဖြင့် ပို့ပေးပါ။\n(ဥပမာ - +95912345678)")
+    elif data == "m_post":
+        input_states[uid] = "post"
+        await event.respond("📌 Share လုပ်လိုသော Post Link ကို ပေးပို့ပါ။")
+    elif data == "m_group":
+        input_states[uid] = "group"
+        await event.respond("📌 Share ထည့်လိုသော Group Link သို့မဟုတ် Username ကို ပေးပို့ပါ။\n(ဥပမာ - https://t.me/mygroup)")
+    elif data == "m_clear":
+        user = get_user(uid)
+        user["groups"] = []
+        save_data(users_db)
+        await event.edit("🗑️ Group စာရင်းအားလုံးကို ရှင်းလင်းပြီးပါပြီ။ 🔙 /menu ကိုနှိပ်ပါ။")
+    elif data == "m_time":
+        input_states[uid] = "time"
+        await event.respond("⏱️ Share မည့် အချိန်ခြားနားချက်ကို စက္ကန့်ဖြင့် ပေးပို့ပါ။\n(ဥပမာ - 30)")
+    elif data == "m_status":
+        user = get_user(uid)
+        is_logged = "✅ ချိတ်ဆက်ပြီး" if user["session"] else "❌ မချိတ်ရသေးပါ"
+        is_running = "🟢 Run နေသည်" if uid in running_tasks else "🔴 ရပ်ထားသည်"
+        msg = (
+            f"📊 **သင်၏ လက်ရှိ အချက်အလက်များ**\n\n"
+            f"• **အကောင့်:** {is_logged}\n"
+            f"• **Post Link:** {user['post_link'] or 'မရှိသေးပါ'}\n"
+            f"• **Group:** {len(user['groups'])} ခု\n"
+            f"• **အချိန်:** {user['interval']} စက္ကန့်\n"
+            f"• **အခြေအနေ:** {is_running}"
+        )
+        await event.edit(msg)
+    elif data == "m_start":
+        user = get_user(uid)
+        if not user["session"]:
+            await event.answer("⚠️ အကောင့် မချိတ်ရသေးပါ။ Login အရင်ဝင်ပါ။", alert=True)
+            return
+        if not user["post_link"] or not user["groups"]:
+            await event.answer("⚠️ Post Link (သို့) Group မထည့်ရသေးပါ။", alert=True)
+            return
+        if uid in running_tasks:
+            await event.answer("⚠️ Auto-Share လုပ်နေပြီးသားဖြစ်ပါသည်။", alert=True)
+            return
+        
+        task = asyncio.create_task(user_share_worker(uid))
+        running_tasks[uid] = task
+        await event.edit("🚀 Auto-Share စတင်နေပါပြီ... 🔙 /menu ကိုနှိပ်ပါ။")
+    elif data == "m_stop":
+        if uid in running_tasks:
+            running_tasks[uid].cancel()
+            running_tasks.pop(uid, None)
+            await event.edit("🛑 Auto-Share ကို ရပ်တန့်လိုက်ပါပြီ။ 🔙 /menu ကိုနှိပ်ပါ။")
+        else:
+            await event.answer("ℹ️ Run နေသော Auto-Share မရှိပါ။", alert=True)
+
+# ================= စာရိုက်မှုများ (Inputs) လက်ခံသည့် အပိုင်း =================
+@bot.on(events.NewMessage)
+async def handle_general_inputs(event):
+    uid = str(event.sender_id)
+    text = event.raw_text.strip()
+    
+    if text.startswith('/'):
+        input_states.pop(uid, None) # Command ရိုက်လျှင် Input တောင်းခြင်း ရပ်မည်
+        return
+
+    # OTP / Login အပိုင်း
+    if uid in login_states:
+        state = login_states[uid]
+        if state["step"] == "phone":
+            client = TelegramClient(StringSession(), API_ID, API_HASH)
+            await client.connect()
+            try:
+                sent = await client.send_code_request(text)
+                state["client"], state["phone"], state["hash"], state["step"] = client, text, sent.phone_code_hash, "otp"
+                await event.respond("📩 Telegram သို့ ရောက်လာသော OTP ကုဒ်ကို Space ခြား၍ ပို့ပါ။ (ဥပမာ - 1 2 3 4 5)")
+            except Exception as e:
+                await client.disconnect()
+                login_states.pop(uid, None)
+                await event.respond(f"❌ အမှားရှိပါသည်: {e}")
+        elif state["step"] == "otp":
+            otp_code = text.replace(" ", "")
+            client = state["client"]
+            try:
+                await client.sign_in(state["phone"], otp_code, phone_code_hash=state["hash"])
+                user = get_user(uid)
+                user["session"] = client.session.save()
+                save_data(users_db)
+                await client.disconnect()
+                login_states.pop(uid, None)
+                await event.respond("✅ အကောင့် ချိတ်ဆက်မှု အောင်မြင်ပါပြီ! 🔙 /menu ကိုနှိပ်ပါ။")
+            except SessionPasswordNeededError:
+                state["step"] = "2fa"
+                await event.respond("🔐 Two-Step (2FA) Password ရိုက်ပို့ပေးပါ-")
+            except Exception as e:
+                await client.disconnect()
+                login_states.pop(uid, None)
+                await event.respond(f"❌ OTP မှားယွင်းနေပါသည်: {e}")
+        elif state["step"] == "2fa":
+            client = state["client"]
+            try:
+                await client.sign_in(password=text)
+                user = get_user(uid)
+                user["session"] = client.session.save()
+                save_data(users_db)
+                await client.disconnect()
+                login_states.pop(uid, None)
+                await event.respond("✅ 2FA အတည်ပြုပြီး အကောင့်ချိတ်ဆက်မှု အောင်မြင်ပါပြီ! 🔙 /menu ကိုနှိပ်ပါ။")
+            except Exception as e:
+                await client.disconnect()
+                login_states.pop(uid, None)
+                await event.respond(f"❌ Password မှားယွင်းနေပါသည်: {e}")
+        return
+
+    # Post Link, Group, Time ထည့်သည့် အပိုင်း
+    if uid in input_states:
+        action = input_states[uid]
+        user = get_user(uid)
+        
+        if action == "post":
+            chat, msg_id = parse_post_link(text)
+            if not chat:
+                await event.respond("❌ Post Link ပုံစံ မှားနေပါသည်။ ပြန်ပို့ပါ။ (သို့) /menu ကိုနှိပ်ပါ။")
+                return
+            user["post_link"] = text
+            save_data(users_db)
+            input_states.pop(uid, None)
+            await event.respond("✅ Post Link သတ်မှတ်ပြီးပါပြီ။ 🔙 /menu ကိုနှိပ်ပါ။")
+            
+        elif action == "group":
+            if 't.me/' not in text:
+                await event.respond("❌ Group Link ပုံစံ မှားနေပါသည်။ 't.me/...' ပါဝင်ရပါမည်။")
+                return
+            if text not in user["groups"]:
+                user["groups"].append(text)
+                save_data(users_db)
+            input_states.pop(uid, None)
+            await event.respond(f"✅ Group Link အောင်မြင်စွာ ထည့်ပြီးပါပြီ။ (စုစုပေါင်း {len(user['groups'])} ခု)\nထပ်ထည့်လိုပါက Button 3 ကို ပြန်နှိပ်ပါ။ 🔙 /menu")
+            
+        elif action == "time":
+            if not text.isdigit():
+                await event.respond("❌ ဂဏန်းသာ ရိုက်ထည့်ပါ။ (ဥပမာ - 30)")
+                return
+            sec = int(text)
+            if sec < 15:
+                await event.respond("⚠️ အနည်းဆုံး 15 စက္ကန့် သတ်မှတ်ပါ။ ပြန်ထည့်ပါ။")
+                return
+            user["interval"] = sec
+            save_data(users_db)
+            input_states.pop(uid, None)
+            await event.respond(f"⏱️ အချိန် ({sec}) စက္ကန့် သတ်မှတ်ပြီးပါပြီ။ 🔙 /menu ကိုနှိပ်ပါ။")
+        return
+
+# Admin Commands များ
+@bot.on(events.NewMessage(pattern=r'/redeem (.+)'))
+async def redeem_cmd(event):
+    uid, key = str(event.sender_id), event.pattern_match.group(1).strip()
+    keys_pool = users_db.get("_vip_keys", {})
+    if key not in keys_pool:
+        await event.respond("❌ VIP Key မှားယွင်းနေပါသည်။")
+        return
     days = keys_pool.pop(key)
     user = get_user(uid)
-    now = time.time()
-    base_time = max(now, user.get("vip_until", 0))
-    user["vip_until"] = base_time + (days * 86400)
+    user["vip_until"] = max(time.time(), user.get("vip_until", 0)) + (days * 86400)
     save_data(users_db)
-
-    await event.respond(
-        f"🎉 **VIP Key အသုံးပြုမှု အောင်မြင်ပါသည်!**\n\n"
-        f"➕ ထပ်တိုးရက်: {days} ရက်\n"
-        f"📅 သက်တမ်းကုန်ဆုံးချိန်: {format_expiry(uid)}"
-    )
+    await event.respond(f"🎉 **VIP အောင်မြင်ပါသည်!**\n➕ ထပ်တိုးရက်: {days} ရက်")
 
 @bot.on(events.NewMessage(pattern=r'/genkey (\d+)(?: (\d+))?'))
 async def genkey_cmd(event):
     uid = str(event.sender_id)
-    if not is_admin(uid):
-        return
-    days = int(event.pattern_match.group(1))
-    count = int(event.pattern_match.group(2) or 1)
+    if not is_admin(uid): return
+    days, count = int(event.pattern_match.group(1)), int(event.pattern_match.group(2) or 1)
     count = min(count, 20)
-
     generated = []
     for _ in range(count):
         k = f"VIP-{secrets.token_hex(4).upper()}"
         users_db["_vip_keys"][k] = days
         generated.append(f"`/redeem {k}`")
-
     save_data(users_db)
-    keys_text = "\n".join(generated)
-    await event.respond(
-        f"🔑 **({days}) ရက်စာ VIP Key ({count}) ခု ထုတ်ပြီးပါပြီ:**\n\n{keys_text}"
-    )
+    await event.respond(f"🔑 **({days}) ရက်စာ VIP Key ({count}) ခု:**\n\n" + "\n".join(generated))
 
 @bot.on(events.NewMessage(pattern=r'/addvip (\d+) (\d+)'))
 async def addvip_cmd(event):
     uid = str(event.sender_id)
-    if not is_admin(uid):
-        return
-    target_id = event.pattern_match.group(1)
-    days = int(event.pattern_match.group(2))
-
+    if not is_admin(uid): return
+    target_id, days = event.pattern_match.group(1), int(event.pattern_match.group(2))
     user = get_user(target_id)
-    now = time.time()
-    base_time = max(now, user.get("vip_until", 0))
-    user["vip_until"] = base_time + (days * 86400)
+    user["vip_until"] = max(time.time(), user.get("vip_until", 0)) + (days * 86400)
     save_data(users_db)
-
     await event.respond(f"✅ User ID `{target_id}` ကို ({days}) ရက် VIP ပေးပြီးပါပြီ။")
-    try:
-        await bot.send_message(int(target_id), f"🎉 Admin မှ သင့်အား ({days}) ရက်စာ VIP သက်တမ်း တိုးပေးလိုက်ပါပြီ!")
-    except Exception:
-        pass
 
 @bot.on(events.NewMessage(pattern=r'/removevip (\d+)'))
 async def removevip_cmd(event):
     uid = str(event.sender_id)
-    if not is_admin(uid):
-        return
+    if not is_admin(uid): return
     target_id = event.pattern_match.group(1)
     user = get_user(target_id)
     user["vip_until"] = 0
     save_data(users_db)
-
     if target_id in running_tasks:
         running_tasks[target_id].cancel()
         running_tasks.pop(target_id, None)
-
-    await event.respond(f"🗑️ User ID `{target_id}` ၏ VIP သက်တမ်းကို ဖျက်သိမ်းလိုက်ပါပြီ။")
+    await event.respond(f"🗑️ User ID `{target_id}` ၏ VIP ကို ဖျက်သိမ်းလိုက်ပါပြီ။")
 
 @bot.on(events.NewMessage(pattern='/vips'))
 async def vips_cmd(event):
     uid = str(event.sender_id)
-    if not is_admin(uid):
-        return
-    active_vips = []
-    for k, v in users_db.items():
-        if k == "_vip_keys":
-            continue
-        if v.get("vip_until", 0) > time.time():
-            active_vips.append(f"• `{k}` - {format_expiry(k)}")
-
+    if not is_admin(uid): return
+    active_vips = [f"• `{k}` - {format_expiry(k)}" for k, v in users_db.items() if k != "_vip_keys" and v.get("vip_until", 0) > time.time()]
     unused_keys = [f"• `{k}` ({d} ရက်)" for k, d in users_db.get("_vip_keys", {}).items()]
-    msg = (
-        f"👑 **လက်ရှိ VIP သက်တမ်းရှိသူများ ({len(active_vips)} ဦး):**\n" +
-        ("\n".join(active_vips) if active_vips else "မရှိသေးပါ") +
-        f"\n\n🔑 **မသုံးရသေးသော လက်ကျန် Key များ ({len(unused_keys)} ခု):**\n" +
-        ("\n".join(unused_keys) if unused_keys else "မရှိသေးပါ")
-    )
-    await event.respond(msg)
-
-async def check_vip_access(event):
-    uid = str(event.sender_id)
-    if not is_vip(uid):
-        await event.respond(
-            "🔒 **သင်သည် VIP သက်တမ်း မရှိသေးပါ!**\n\n"
-            f"သင့် User ID: `{uid}`\n"
-            "Admin ထံမှ Key ယူပြီး `/redeem <VIP_KEY>` ဖြင့် သက်တမ်းသွင်းပါ။"
-        )
-        return False
-    return True
-
-@bot.on(events.NewMessage(pattern='/login'))
-async def login_cmd(event):
-    if not await check_vip_access(event):
-        return
-    uid = str(event.sender_id)
-    login_states[uid] = {"step": "phone"}
-    await event.respond("📱 သင်ချိတ်ဆက်လိုသော Telegram ဖုန်းနံပါတ်ကို Country Code ဖြင့် ပို့ပေးပါ။ (ဥပမာ - `+959123456789`)")
-
-@bot.on(events.NewMessage(pattern=r'/setpost (.+)'))
-async def setpost_cmd(event):
-    if not await check_vip_access(event):
-        return
-    uid = str(event.sender_id)
-    link = event.pattern_match.group(1).strip()
-    chat, msg_id = parse_post_link(link)
-    if not chat:
-        await event.respond("❌ Post Link ပုံစံ မှားနေပါသည်။")
-        return
-    user = get_user(uid)
-    user["post_link"] = link
-    save_data(users_db)
-    await event.respond(f"✅ Post Link သတ်မှတ်ပြီးပါပြီ:\n{link}")
-
-@bot.on(events.NewMessage(pattern='/addgroups'))
-async def addgroups_cmd(event):
-    if not await check_vip_access(event):
-        return
-    uid = str(event.sender_id)
-    text = event.raw_text.strip()
-    parts = text.split(maxsplit=1)
-    
-    if len(parts) < 2 or 't.me/' not in parts[1]:
-        await event.respond(
-            "📌 Group Link ထည့်ရန် ပုံစံမှန်မှာ အောက်ပါအတိုင်း ဖြစ်ပါသည် (စာကြောင်းတည်းတည်းတွင် ရိုက်ပါ)-\n\n"
-            "`/addgroups https://t.me/your_group`"
-        )
-        return
-        
-    link = parts[1].strip()
-    user = get_user(uid)
-    if link not in user["groups"]:
-        user["groups"].append(link)
-        save_data(users_db)
-    await event.respond(f"✅ Group Link အောင်မြင်စွာ ထည့်ပြီးပါပြီ။ စုစုပေါင်း Group: {len(user['groups'])} ခု။")
-
-@bot.on(events.NewMessage(pattern='/clear'))
-async def clear_cmd(event):
-    if not await check_vip_access(event):
-        return
-    uid = str(event.sender_id)
-    user = get_user(uid)
-    user["groups"] = []
-    save_data(users_db)
-    await event.respond("🗑️ Group စာရင်းအားလုံးကို ရှင်းလင်းပြီးပါပြီ။")
-
-@bot.on(events.NewMessage(pattern=r'/settime (\d+)'))
-async def settime_cmd(event):
-    if not await check_vip_access(event):
-        return
-    uid = str(event.sender_id)
-    sec = int(event.pattern_match.group(1))
-    if sec < 15:
-        await event.respond("⚠️ အကောင့် Ban မထိစေရန် အနည်းဆုံး 15 စက္ကန့် သတ်မှတ်ပါ။")
-        return
-    user = get_user(uid)
-    user["interval"] = sec
-    save_data(users_db)
-    await event.respond(f"⏱️ Share မည့်အချိန်ကို ({sec}) စက္ကန့်တိုင်းဟု သတ်မှတ်ပြီးပါပြီ။")
-
-@bot.on(events.NewMessage(pattern='/status'))
-async def status_cmd(event):
-    uid = str(event.sender_id)
-    user = get_user(uid)
-    is_logged = "✅ ချိတ်ဆက်ပြီး" if user["session"] else "❌ မချိတ်ရသေးပါ"
-    is_running = "🟢 Run နေသည်" if uid in running_tasks else "🔴 ရပ်ထားသည်"
-    msg = (
-        f"📊 **သင်၏ လက်ရှိ အချက်အလက်များ**\n\n"
-        f"• **User ID:** `{uid}`\n"
-        f"• **VIP သက်တမ်း:** {format_expiry(uid)}\n"
-        f"• **အကောင့်:** {is_logged}\n"
-        f"• **Post Link:** {user['post_link'] or 'မထည့်ရသေးပါ'}\n"
-        f"• **Group အရေအတွက်:** {len(user['groups'])} ခု\n"
-        f"• **အချိန်ခြားနားချက်:** {user['interval']} စက္ကန့်\n"
-        f"• **လက်ရှိအခြေအနေ:** {is_running}"
-    )
-    await event.respond(msg)
-
-@bot.on(events.NewMessage(pattern='/startshare'))
-async def startshare_cmd(event):
-    if not await check_vip_access(event):
-        return
-    uid = str(event.sender_id)
-    user = get_user(uid)
-    if not user["session"]:
-        await event.respond("⚠️ အကောင့် မချိတ်ရသေးပါ။ `/login` ကို အရင်နှိပ်ပါ။")
-        return
-    if not user["post_link"]:
-        await event.respond("⚠️ Post Link မထည့်ရသေးပါ။ `/setpost <link>` ဖြင့် အရင်ထည့်ပါ။")
-        return
-    if not user["groups"]:
-        await event.respond("⚠️ Group Link မထည့်ရသေးပါ။ `/addgroups` ဖြင့် အရင်ထည့်ပါ။")
-        return
-    if uid in running_tasks:
-        await event.respond("⚠️ သင့်အကောင့်သည် လက်ရှိ Auto-Share လုပ်နေပြီးသား ဖြစ်ပါသည်။")
-        return
-
-    task = asyncio.create_task(user_share_worker(uid))
-    running_tasks[uid] = task
-
-@bot.on(events.NewMessage(pattern='/stopshare'))
-async def stopshare_cmd(event):
-    uid = str(event.sender_id)
-    if uid in running_tasks:
-        running_tasks[uid].cancel()
-        running_tasks.pop(uid, None)
-        await event.respond("🛑 Auto-Share ကို ရပ်တန့်လိုက်ပါပြီ။")
-    else:
-        await event.respond("ℹ️ လက်ရှိ Run နေသော Auto-Share မရှိပါ။")
-
-@bot.on(events.NewMessage)
-async def handle_login_steps(event):
-    uid = str(event.sender_id)
-    text = event.raw_text.strip()
-    if text.startswith('/') or uid not in login_states:
-        return
-
-    state = login_states[uid]
-
-    if state["step"] == "phone":
-        client = TelegramClient(StringSession(), API_ID, API_HASH)
-        await client.connect()
-        try:
-            sent = await client.send_code_request(text)
-            state["client"] = client
-            state["phone"] = text
-            state["hash"] = sent.phone_code_hash
-            state["step"] = "otp"
-            await event.respond(
-                "📩 သင့် Telegram သို့ ရောက်လာသော **OTP ကုဒ် (၅) လုံး** ကို ပို့ပေးပါ။\n"
-                "(ဂဏန်းများကြားတွင် Space ခြားပြီး ပို့ပါ၊ ဥပမာ - `1 2 3 4 5`)"
-            )
-        except Exception as e:
-            await client.disconnect()
-            login_states.pop(uid, None)
-            await event.respond(f"❌ အမှားရှိပါသည်: {e}")
-
-    elif state["step"] == "otp":
-        otp_code = text.replace(" ", "")
-        client = state["client"]
-        try:
-            await client.sign_in(state["phone"], otp_code, phone_code_hash=state["hash"])
-            session_str = client.session.save()
-            user = get_user(uid)
-            user["session"] = session_str
-            save_data(users_db)
-            await client.disconnect()
-            login_states.pop(uid, None)
-            await event.respond("✅ **အကောင့် ချိတ်ဆက်မှု အောင်မြင်ပါပြီ!**")
-        except SessionPasswordNeededError:
-            state["step"] = "2fa"
-            await event.respond("🔐 Two-Step Verification (2FA) Password ရိုက်ပို့ပေးပါ-")
-        except Exception as e:
-            await client.disconnect()
-            login_states.pop(uid, None)
-            await event.respond(f"❌ OTP မှားယွင်းနေပါသည်: {e}")
-
-    elif state["step"] == "2fa":
-        client = state["client"]
-        try:
-            await client.sign_in(password=text)
-            session_str = client.session.save()
-            user = get_user(uid)
-            user["session"] = session_str
-            save_data(users_db)
-            await client.disconnect()
-            login_states.pop(uid, None)
-            await event.respond("✅ **2FA အတည်ပြုပြီး အကောင့်ချိတ်ဆက်မှု အောင်မြင်ပါပြီ!**")
-        except Exception as e:
-            await client.disconnect()
-            login_states.pop(uid, None)
-            await event.respond(f"❌ Password မှားယွင်းနေပါသည်: {e}")
+    await event.respond(f"👑 **VIP ရှိသူများ:**\n" + ("\n".join(active_vips) if active_vips else "မရှိပါ") + f"\n\n🔑 **လက်ကျန် Key များ:**\n" + ("\n".join(unused_keys) if unused_keys else "မရှိပါ"))
 
 if __name__ == "__main__":
     Thread(target=run_server, daemon=True).start()
-    print("🤖 VIP Multi-User Auto-Share Bot စတင် အလုပ်လုပ်နေပါပြီ...")
+    print("🤖 VIP Auto-Share Bot Started...")
     bot.run_until_disconnected()
