@@ -22,7 +22,7 @@ from telethon.errors import (
 API_ID = 30424297                  
 API_HASH = '815196d0e53b30fd4b33a98210442c98'    
 # သတိပြုရန် - BotFather တွင် /revoke လုပ်ထားပါက Token အသစ်ကို အောက်တွင် ထည့်ပါ
-BOT_TOKEN = '9111222051:AAGea2BYZ4xuc51wn6ORkCpqxOzNhsxmIoE'
+BOT_TOKEN = '9111222051:AAEIKxU0tSG7pk0AyRdAaBYpEaygoqLOee8'
 ADMIN_IDS = [6449880399]
 # ====================================================================
 
