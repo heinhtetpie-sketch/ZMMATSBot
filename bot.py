@@ -21,7 +21,6 @@ from telethon.errors import (
 # ================= သင်၏ API နှင့် ADMIN အချက်အလက်များ =================
 API_ID = 30424297                  
 API_HASH = '815196d0e53b30fd4b33a98210442c98'    
-# သတိပြုရန် - BotFather တွင် /revoke လုပ်ထားပါက Token အသစ်ကို အောက်တွင် ထည့်ပါ
 BOT_TOKEN = '9111222051:AAEIKxU0tSG7pk0AyRdAaBYpEaygoqLOee8'
 ADMIN_IDS = [6449880399]
 # ====================================================================
@@ -55,19 +54,28 @@ if "_vip_keys" not in users_db:
     users_db["_vip_keys"] = {}
 
 running_tasks = {}
+active_clients = {}   # လက်ရှိ ပွင့်နေသော Client များကို သိမ်းထားရန် (Force Stop အတွက်)
+active_task_ids = {}  # Task နှစ်ခု ထပ်မပွားစေရန် စစ်ဆေးသည့် ID
 login_states = {}
 input_states = {}
 
-# Render တွင် Deploy Error မတက်စေရန် Memory Session သုံးပြီး Async ဖြင့် စတင်ထားသည်
 bot = TelegramClient(StringSession(), API_ID, API_HASH)
 
 def get_user(uid):
     uid = str(uid)
     if uid not in users_db:
-        users_db[uid] = {"session": None, "post_link": None, "groups": [], "interval": 30, "vip_until": 0}
+        users_db[uid] = {
+            "session": None,
+            "post_link": None,
+            "groups": [],
+            "interval": 60,
+            "vip_until": 0,
+            "is_sharing": False
+        }
         save_data(users_db)
     else:
         users_db[uid].setdefault("vip_until", 0)
+        users_db[uid].setdefault("is_sharing", False)
     return users_db[uid]
 
 def is_admin(uid):
@@ -130,36 +138,65 @@ async def resolve_and_join_group(client, link):
     except Exception as e:
         return None, str(e)
 
-# ================= Auto-Share အလုပ်လုပ်သည့် အဓိက စနစ် =================
-async def user_share_worker(uid):
+async def force_stop_user_share(uid):
+    """နောက်ကွယ်တွင် ကျန်နေသော Task နှင့် Client အားလုံးကို အတင်းအကျပ် ရပ်တန့်ပေးသည့်စနစ်"""
+    uid = str(uid)
     user = get_user(uid)
+    user["is_sharing"] = False
+    save_data(users_db)
+    
+    # Task ID ကို ပြောင်းလိုက်သဖြင့် နောက်ကွယ်က Loop အဟောင်းများ အလိုအလျောက် ရပ်သွားမည်
+    active_task_ids[uid] = None
+
+    task = running_tasks.pop(uid, None)
+    if task and not task.done():
+        task.cancel()
+
+    client = active_clients.pop(uid, None)
+    if client:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+# ================= Auto-Share အလုပ်လုပ်သည့် အဓိက စနစ် =================
+async def user_share_worker(uid, my_task_id):
+    uid = str(uid)
+    user = get_user(uid)
+    
+    # အရင်ပွင့်နေသော Client အဟောင်းရှိပါက အရင်ပိတ်မည်
+    old_client = active_clients.pop(uid, None)
+    if old_client:
+        try:
+            await old_client.disconnect()
+        except Exception:
+            pass
+
     client = TelegramClient(StringSession(user["session"]), API_ID, API_HASH)
+    active_clients[uid] = client
     
     try:
         await client.connect()
         if not await client.is_user_authorized():
             await bot.send_message(int(uid), "❌ အကောင့် Session သက်တမ်းကုန်သွားပါပြီ။ `1️⃣ အကောင့်ချိတ်ရန်` ဖြင့် အသစ်ပြန်ချိတ်ပါ။")
-            running_tasks.pop(uid, None)
+            await force_stop_user_share(uid)
             return
     except Exception as e:
         await bot.send_message(int(uid), f"❌ အကောင့်ချိတ်ဆက်မှု အမှား: {e}")
-        running_tasks.pop(uid, None)
+        await force_stop_user_share(uid)
         return
 
     source_chat, msg_id = parse_post_link(user["post_link"])
     if not source_chat:
         await bot.send_message(int(uid), "❌ Post Link ပုံစံ မှားနေပါသည်။ ပြန်ထည့်ပါ။")
-        running_tasks.pop(uid, None)
-        await client.disconnect()
+        await force_stop_user_share(uid)
         return
 
-    # Private Channel/Group များကို သိရှိစေရန် Dialogs များကို အရင်ဆွဲယူခြင်း
     try:
         await client.get_dialogs(limit=100)
     except Exception:
         pass
 
-    # မူရင်း Post ကို ယူ၍ ရမရ အရင်စမ်းသပ်ခြင်း
     try:
         test_msg = await client.get_messages(source_chat, ids=msg_id)
         if not test_msg:
@@ -168,13 +205,11 @@ async def user_share_worker(uid):
                 "❌ **Share ရမည့် မူရင်း Post ကို ရှာမတွေ့ပါ!**\n"
                 "သင်ချိတ်ထားသော အကောင့်သည် မူရင်း Post တင်ထားသည့် Channel/Group ထဲသို့ Join ထားရန် လိုအပ်ပါသည်။"
             )
-            running_tasks.pop(uid, None)
-            await client.disconnect()
+            await force_stop_user_share(uid)
             return
     except Exception as e:
-        await bot.send_message(int(uid), f"❌ **မူရင်း Post ကို ယူ၍မရပါ:** `{e}`\nChannel/Group ကို အရင် Join ထားပါ။")
-        running_tasks.pop(uid, None)
-        await client.disconnect()
+        await bot.send_message(int(uid), f"❌ **မူရင်း Post ကို ယူ၍မရပါ:** `{e}`")
+        await force_stop_user_share(uid)
         return
 
     await bot.send_message(int(uid), f"🔄 Group ({len(user['groups'])}) ခုကို စစ်ဆေးပြီး ချိတ်ဆက်နေပါသည်...")
@@ -182,6 +217,8 @@ async def user_share_worker(uid):
     target_chats = []
     failed_groups = []
     for link in list(user["groups"]):
+        if not user.get("is_sharing") or active_task_ids.get(uid) != my_task_id:
+            return
         entity, err = await resolve_and_join_group(client, link)
         if entity:
             target_chats.append((link, entity))
@@ -192,18 +229,21 @@ async def user_share_worker(uid):
     if not target_chats:
         err_text = "\n".join(failed_groups)
         await bot.send_message(int(uid), f"⚠️ **မည်သည့် Group ကိုမှ ချိတ်ဆက်မရပါ:**\n{err_text}")
-        running_tasks.pop(uid, None)
-        await client.disconnect()
+        await force_stop_user_share(uid)
         return
 
-    status_notice = f"✅ Group ({len(target_chats)}) ခု အသင့်ဖြစ်ပါပြီ။\n🚀 စက္ကန့် ({user['interval']}) တိုင်း စတင် Share နေပါပြီ!"
+    status_notice = (
+        f"✅ Group ({len(target_chats)}) ခု အသင့်ဖြစ်ပါပြီ။\n"
+        f"🚀 Group အားလုံးပို့ပြီးတိုင်း စက္ကန့် ({user['interval']}) အတိအကျခြား၍ Share ပေးပါမည်!"
+    )
     if failed_groups:
         status_notice += f"\n\n⚠️ ချိတ်မရသော Group များ:\n" + "\n".join(failed_groups)
     await bot.send_message(int(uid), status_notice)
 
     first_round = True
     try:
-        while True:
+        # Task ID တူညီပြီး is_sharing ပွင့်နေသမျှ ကာလပတ်လုံးသာ အလုပ်လုပ်မည် (နှစ်ခုထပ်မပွားနိုင်ပါ)
+        while user.get("is_sharing", False) and active_task_ids.get(uid) == my_task_id:
             if not is_vip(uid):
                 await bot.send_message(int(uid), "⚠️ VIP သက်တမ်း ကုန်ဆုံးသဖြင့် ရပ်တန့်လိုက်ပါပြီ။")
                 break
@@ -217,7 +257,7 @@ async def user_share_worker(uid):
 
             try:
                 original_msg = await client.get_messages(source_chat, ids=msg_id)
-            except Exception as e:
+            except Exception:
                 await asyncio.sleep(10)
                 continue
 
@@ -229,23 +269,28 @@ async def user_share_worker(uid):
             success_count = 0
 
             for link, chat_entity in target_chats:
+                # ပို့နေစဉ်အတွင်း User က ရပ်လိုက်ပါက ချက်ချင်း ထွက်မည်
+                if not user.get("is_sharing", False) or active_task_ids.get(uid) != my_task_id:
+                    break
+
                 try:
                     await client.forward_messages(chat_entity, original_msg)
                     success_count += 1
-                    await asyncio.sleep(2.5)
+                    # Group တစ်ခုနှင့်တစ်ခုကြား 3 စက္ကန့်ခြားမည်
+                    await asyncio.sleep(3)
                 except SlowModeWaitError as e:
                     round_errors.append(f"• {link}: SlowMode ({e.seconds}s စောင့်ရမည်)")
                     continue
                 except FloodWaitError as e:
                     round_errors.append(f"• {link}: FloodWait ({e.seconds}s)")
-                    if e.seconds <= 60:
+                    # FloodWait အချိန်အရမ်းများနေလျှင် အခြား Group များပါ ရပ်မသွားစေရန် ကျော်သွားမည်
+                    if e.seconds <= 30:
                         await asyncio.sleep(e.seconds)
                     else:
-                        break
+                        continue
                 except Exception as e:
                     round_errors.append(f"• {link}: `{type(e).__name__}` - {e}")
 
-            # ပထမဆုံးအကြိမ် ပို့ရာတွင် Group တစ်ခုမှ ပို့မရပါက အကြောင်းရင်းအမှန်ကို အသိပေးမည်
             if first_round and success_count == 0 and round_errors:
                 await bot.send_message(
                     int(uid),
@@ -253,12 +298,22 @@ async def user_share_worker(uid):
                 )
             first_round = False
 
-            await asyncio.sleep(user["interval"])
+            # သတ်မှတ်ထားသော စက္ကန့်အတိုင်း အတိအကျ စောင့်မည် (စောင့်နေစဉ် ရပ်လိုက်ပါကလည်း ချက်ချင်းရပ်မည်)
+            wait_seconds = int(user.get("interval", 60))
+            for _ in range(wait_seconds):
+                if not user.get("is_sharing", False) or active_task_ids.get(uid) != my_task_id:
+                    break
+                await asyncio.sleep(1)
 
     except asyncio.CancelledError:
         pass
     finally:
-        running_tasks.pop(uid, None)
+        # မိမိ Task ID ဖြစ်နေသေးလျှင်သာ Cleanup လုပ်မည်
+        if active_task_ids.get(uid) == my_task_id:
+            user["is_sharing"] = False
+            save_data(users_db)
+            running_tasks.pop(uid, None)
+            active_clients.pop(uid, None)
         try:
             await client.disconnect()
         except Exception:
@@ -319,6 +374,7 @@ async def callback_handler(event):
         return
 
     if data == "m_login":
+        await force_stop_user_share(uid)
         login_states[uid] = {"step": "phone"}
         await event.edit("📱 ချိတ်ဆက်လိုသော Telegram ဖုန်းနံပါတ်ကို Country Code ဖြင့် ပို့ပေးပါ။\n(ဥပမာ - +95912345678)", buttons=back_btn)
     elif data == "m_post":
@@ -340,12 +396,12 @@ async def callback_handler(event):
         await event.edit("🗑️ Group စာရင်းအားလုံးကို ရှင်းလင်းပြီးပါပြီ။", buttons=back_btn)
     elif data == "m_time":
         input_states[uid] = "time"
-        await event.edit("⏱️ Share မည့် အချိန်ခြားနားချက်ကို စက္ကန့်ဖြင့် ပေးပို့ပါ။\n(ဥပမာ - 30)", buttons=back_btn)
+        await event.edit("⏱️ Share မည့် အချိန်ခြားနားချက်ကို စက္ကန့်ဖြင့် ပေးပို့ပါ။\n(ဥပမာ - 60)", buttons=back_btn)
     elif data == "m_status":
         user = get_user(uid)
         is_logged = "✅ ချိတ်ဆက်ပြီး" if user["session"] else "❌ မချိတ်ရသေးပါ"
         task = running_tasks.get(uid)
-        is_running = "🟢 Run နေသည်" if (task and not task.done()) else "🔴 ရပ်ထားသည်"
+        is_running = "🟢 Run နေသည်" if (user.get("is_sharing") and task and not task.done()) else "🔴 ရပ်ထားသည်"
         groups_list = "\n".join([f"  {i+1}. {g}" for i, g in enumerate(user["groups"])]) if user["groups"] else "  မရှိသေးပါ"
         msg = (
             f"📊 **သင်၏ လက်ရှိ အချက်အလက်များ**\n\n"
@@ -364,19 +420,23 @@ async def callback_handler(event):
         if not user["post_link"] or not user["groups"]:
             await event.answer("⚠️ Post Link (သို့) Group မထည့်ရသေးပါ။", alert=True)
             return
-        if uid in running_tasks and not running_tasks[uid].done():
-            running_tasks[uid].cancel()
         
-        task = asyncio.create_task(user_share_worker(uid))
+        # အရင် Run နေသော Task အဟောင်းရှိပါက အပြီးအပိုင် အရင်သတ်မည် (နှစ်ခု မထပ်စေရန်)
+        await force_stop_user_share(uid)
+        await asyncio.sleep(0.5)
+
+        user["is_sharing"] = True
+        save_data(users_db)
+        new_task_id = secrets.token_hex(8)
+        active_task_ids[uid] = new_task_id
+
+        task = asyncio.create_task(user_share_worker(uid, new_task_id))
         running_tasks[uid] = task
         await event.edit("🚀 Auto-Share စတင်နေပါပြီ...", buttons=back_btn)
     elif data == "m_stop":
-        if uid in running_tasks:
-            running_tasks[uid].cancel()
-            running_tasks.pop(uid, None)
-            await event.edit("🛑 Auto-Share ကို ရပ်တန့်လိုက်ပါပြီ။", buttons=back_btn)
-        else:
-            await event.answer("ℹ️ Run နေသော Auto-Share မရှိပါ။", alert=True)
+        # Status တွင် ရပ်ထားသည်ဟု ပြနေသော်လည်း နောက်ကွယ်မှ Task အားလုံးကို အတင်းအကျပ် ပိတ်ချမည်
+        await force_stop_user_share(uid)
+        await event.edit("🛑 Auto-Share လုပ်ငန်းစဉ် အားလုံးကို လုံးဝ ရပ်တန့်လိုက်ပါပြီ။", buttons=back_btn)
 
 @bot.on(events.NewMessage)
 async def handle_general_inputs(event):
@@ -490,7 +550,7 @@ async def handle_general_inputs(event):
             
         elif action == "time":
             if not text.isdigit():
-                await event.respond("❌ ဂဏန်းသာ ရိုက်ထည့်ပါ။ (ဥပမာ - 30)", buttons=back_btn)
+                await event.respond("❌ ဂဏန်းသာ ရိုက်ထည့်ပါ။ (ဥပမာ - 60)", buttons=back_btn)
                 return
             sec = int(text)
             if sec < 15:
@@ -499,7 +559,7 @@ async def handle_general_inputs(event):
             user["interval"] = sec
             save_data(users_db)
             input_states.pop(uid, None)
-            await event.respond(f"⏱️ အချိန် ({sec}) စက္ကန့် သတ်မှတ်ပြီးပါပြီ။", buttons=back_btn)
+            await event.respond(f"⏱️ အချိန် ({sec}) စက္ကန့် သတ်မှတ်ပြီးပါပြီ။\n(လက်ရှိ Share နေပါက အချိန်အသစ်သက်ရောက်စေရန် ရပ်ပြီး ပြန်စပေးပါ)", buttons=back_btn)
         return
 
 @bot.on(events.NewMessage(pattern=r'/redeem (.+)'))
@@ -547,9 +607,7 @@ async def removevip_cmd(event):
     user = get_user(target_id)
     user["vip_until"] = 0
     save_data(users_db)
-    if target_id in running_tasks:
-        running_tasks[target_id].cancel()
-        running_tasks.pop(target_id, None)
+    await force_stop_user_share(target_id)
     await event.respond(f"🗑️ User ID `{target_id}` ၏ VIP ကို ဖျက်သိမ်းလိုက်ပါပြီ။")
 
 @bot.on(events.NewMessage(pattern='/vips'))
